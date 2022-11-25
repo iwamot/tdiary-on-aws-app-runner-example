@@ -1,0 +1,192 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Example infrastructure stack of 'tDiary on AWS App Runner'",
+    "Parameters": {
+        "VpcCidrBlock": {
+            "Type": "String",
+            "Default": "172.33.0.0/16"
+        },
+        "RedisPort": {
+            "Type": "Number",
+            "Default": 6379
+        }
+    },
+    "Resources": {
+        "VPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "CidrBlock": {"Ref": "VpcCidrBlock"},
+                "EnableDnsSupport": "true",
+                "EnableDnsHostnames": "true",
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-vpc"}
+                ]
+            }
+        },
+        "Subnet": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "VpcId": {"Ref": "VPC"},
+                "CidrBlock": {"Fn::Select": [0, {"Fn::Cidr": [{"Ref": "VpcCidrBlock"}, 1, 12]}]},
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-subnet"}
+                ]
+            }
+        },
+        "RouteTable": {
+            "Type": "AWS::EC2::RouteTable",
+            "Properties": {
+                "VpcId": {"Ref": "VPC"},
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-route-table"}
+                ]
+            }
+        },
+        "SubnetRouteTableAssociation": {
+            "Type": "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties": {
+                "SubnetId": {"Ref": "Subnet"},
+                "RouteTableId": {"Ref": "RouteTable"}
+            }
+        },
+        "ImageRepository": {
+            "Type": "AWS::ECR::Repository",
+            "Properties": {
+                "RepositoryName": "tdiary",
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-image-repository"}
+                ]
+            }
+        },
+        "AppRunnerAccessRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "RoleName": "tdiary-app-runner-access-role",
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "build.apprunner.amazonaws.com"
+                                ]
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "Path": "/",
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess"
+                ],
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-app-runner-access-role"}
+                ]
+            }
+        },
+        "VpcConnectorSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Attach to tDiary App Runner VPC Connector",
+                "VpcId": {"Ref": "VPC"},
+                "SecurityGroupIngress": [],
+                "SecurityGroupEgress": [{
+                    "IpProtocol": "-1",
+                    "FromPort": -1,
+                    "ToPort": -1,
+                    "CidrIp": "0.0.0.0/0"
+                }],
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-vpc-connector-security-group"}
+                ]
+            }
+        },
+        "VpcConnector": {
+            "Type": "AWS::AppRunner::VpcConnector",
+            "Properties": {
+                "VpcConnectorName": "tdiary-vpc-connector",
+                "Subnets": [{"Ref": "Subnet"}],
+                "SecurityGroups": [{"Ref": "VpcConnectorSecurityGroup"}],
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-vpc-connector"}
+                ]
+            }
+        },
+        "RedisClusterSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Allow access to tDiary Redis cluster",
+                "VpcId": {"Ref": "VPC"},
+                "SecurityGroupIngress": [{
+                    "IpProtocol": "tcp",
+                    "FromPort": {"Ref": "RedisPort"},
+                    "ToPort": {"Ref": "RedisPort"},
+                    "SourceSecurityGroupId": {"Ref": "VpcConnectorSecurityGroup"}
+                }],
+                "SecurityGroupEgress": [{
+                    "IpProtocol": "-1",
+                    "FromPort": -1,
+                    "ToPort": -1,
+                    "CidrIp": "0.0.0.0/0"
+                }],
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-redis-cluster-security-group"}
+                ]
+            }
+        },
+        "RedisClusterSubnetGroup": {
+            "Type": "AWS::ElastiCache::SubnetGroup",
+            "Properties": {
+                "CacheSubnetGroupName": "tdiary-redis-cluster-subnet-group",
+                "Description": "Subnet group for tdiary-redis-cluster",
+                "SubnetIds": [{"Ref": "Subnet"}],
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-redis-cluster-subnet-group"}
+                ]
+            }
+        },
+        "RedisCluster": {
+            "Type": "AWS::ElastiCache::CacheCluster",
+            "Properties": {
+                "ClusterName": "tdiary-redis-cluster",
+                "Engine": "redis",
+                "EngineVersion": "7.0",
+                "CacheNodeType": "cache.t4g.micro",
+                "NumCacheNodes": 1,
+                "Port": {"Ref": "RedisPort"},
+                "CacheParameterGroupName": "default.redis7",
+                "CacheSubnetGroupName": {"Ref": "RedisClusterSubnetGroup"},
+                "VpcSecurityGroupIds": [{"Ref": "RedisClusterSecurityGroup"}],
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-redis-cluster"}
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "SubnetCidrBlock": {
+            "Value": {"Fn::GetAtt": ["Subnet", "CidrBlock"]}
+        },
+        "ImageRepositoryUri": {
+            "Value": {"Fn::GetAtt": ["ImageRepository", "RepositoryUri"]},
+            "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ImageRepositoryUri"}}
+        },
+        "AppRunnerAccessRoleArn": {
+            "Value": {"Fn::GetAtt": ["AppRunnerAccessRole", "Arn"]},
+            "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-AppRunnerAccessRoleArn"}}
+        },
+        "VpcConnectorArn": {
+            "Value": {"Fn::GetAtt": ["VpcConnector", "VpcConnectorArn"]},
+            "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-VpcConnectorArn"}}
+        },
+        "RedisEndpointAddress": {
+            "Value": {"Fn::GetAtt": ["RedisCluster", "RedisEndpoint.Address"]},
+            "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-RedisEndpointAddress"}}
+        },
+        "RedisEndpointPort": {
+            "Value": {"Fn::GetAtt": ["RedisCluster", "RedisEndpoint.Port"]},
+            "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-RedisEndpointPort"}}
+        }
+    }
+}

@@ -1,0 +1,68 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Example service stack of 'tDiary on AWS App Runner'",
+    "Parameters": {
+        "InfrastructureStackName": {
+            "Type": "String",
+            "Default": "tdiary-infrastructure-stack"
+        }
+    },
+    "Resources": {
+        "Service": {
+            "Type": "AWS::AppRunner::Service",
+            "Properties": {
+                "ServiceName": "tdiary-service",
+                "SourceConfiguration": {
+                    "AuthenticationConfiguration": {
+                        "AccessRoleArn": {"Fn::ImportValue": {"Fn::Sub": "${InfrastructureStackName}-AppRunnerAccessRoleArn"}}
+                    },
+                    "AutoDeploymentsEnabled": true,
+                    "ImageRepository": {
+                        "ImageConfiguration": {
+                            "Port": "9292",
+                            "RuntimeEnvironmentVariables": [
+                                {
+                                    "Name": "RACK_ENV",
+                                    "Value": "deployment"
+                                },
+                                {
+                                    "Name": "REDIS_HOST",
+                                    "Value": {"Fn::ImportValue": {"Fn::Sub": "${InfrastructureStackName}-RedisEndpointAddress"}}
+                                },
+                                {
+                                    "Name": "REDIS_PORT",
+                                    "Value": {"Fn::ImportValue": {"Fn::Sub": "${InfrastructureStackName}-RedisEndpointPort"}}
+                                }
+                            ]
+                        },
+                        "ImageIdentifier": {
+                            "Fn::Sub": [
+                                "${Uri}:latest",
+                                {"Uri": {"Fn::ImportValue": {"Fn::Sub": "${InfrastructureStackName}-ImageRepositoryUri"}}}
+                            ]
+                        },
+                        "ImageRepositoryType": "ECR"
+                    }
+                },
+                "InstanceConfiguration": {
+                    "Cpu": "1 vCPU",
+                    "Memory": "2 GB"
+                },
+                "NetworkConfiguration": {
+                    "EgressConfiguration": {
+                        "EgressType": "VPC",
+                        "VpcConnectorArn": {"Fn::ImportValue": {"Fn::Sub": "${InfrastructureStackName}-VpcConnectorArn"}}
+                    }
+                },
+                "Tags": [
+                    {"Key": "Name", "Value": "tdiary-service"}
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "ServiceUrl": {
+            "Value": {"Fn::Sub": ["https://${Url}", {"Url": {"Fn::GetAtt": ["Service", "ServiceUrl"]}}]}
+        }
+    }
+}
